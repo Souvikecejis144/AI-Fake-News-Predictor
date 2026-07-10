@@ -101,11 +101,19 @@ Final Result
 - Tokenization
 
 ## Recommended Models
+- Google Gemini 2.5 Flash (LLM) ⭐⭐⭐⭐⭐
 - DeBERTa-v3 ⭐⭐⭐⭐⭐
 - RoBERTa
 - BERT
 - DistilBERT
 - Longformer
+
+### API Key Setup
+To enable advanced LLM capabilities (Gemini predictions, abstractive AI summaries, topic classification, and sentiment mapping), create a `.env` file at the root of the project:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+If no key is configured, the application automatically falls back to local heuristic classifiers and TF-IDF processing.
 
 ## Evaluation Metrics
 - Accuracy
