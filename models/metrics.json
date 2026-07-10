@@ -1,0 +1,22 @@
+{
+  "accuracy": 0.9650019661816752,
+  "precision": 0.9678207154144519,
+  "recall": 0.9682379994251221,
+  "f1_score": 0.9680293124506071,
+  "confusion_matrix": {
+    "tn": 5533,
+    "fp": 224,
+    "fn": 221,
+    "tp": 6737
+  },
+  "evaluation": {
+    "dataset": "WELFake",
+    "dataset_path": "datasets\\WELFake_Dataset.csv",
+    "total_samples_after_deduplication": 63574,
+    "train_samples": 50859,
+    "test_samples": 12715,
+    "split": "80/20 stratified holdout after exact article deduplication",
+    "source_label_mapping": "WELFake: 1 = FAKE, 0 = REAL",
+    "application_label_mapping": "Application: 0 = FAKE, 1 = REAL"
+  }
+}
