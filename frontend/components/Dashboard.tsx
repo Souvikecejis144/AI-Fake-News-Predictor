@@ -13,6 +13,7 @@ interface AnalysisResults {
   prediction: 'REAL' | 'FAKE';
   confidence: number;
   modelUsed: string;
+  warning?: string;
   attributions: AttributionToken[];
   summary: string;
   keywords: string[];
