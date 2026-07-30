@@ -79,7 +79,7 @@ export default function Dashboard() {
       const summaryRes = await fetch(`${apiBase}/summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model_type: modelType }),
       });
       const summaryData = summaryRes.ok ? await summaryRes.json() : { summary: 'Summary unavailable.' };
 
@@ -87,7 +87,7 @@ export default function Dashboard() {
       const keywordsRes = await fetch(`${apiBase}/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model_type: modelType }),
       });
       const keywordsData = keywordsRes.ok ? await keywordsRes.json() : { keywords: [] };
 
@@ -95,7 +95,7 @@ export default function Dashboard() {
       const topicsRes = await fetch(`${apiBase}/topics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model_type: modelType }),
       });
       const topicsData = topicsRes.ok ? await topicsRes.json() : { topic: 'General' };
 
@@ -103,7 +103,7 @@ export default function Dashboard() {
       const sentimentRes = await fetch(`${apiBase}/sentiment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model_type: modelType }),
       });
       const sentimentData = sentimentRes.ok 
         ? await sentimentRes.json() 
@@ -114,6 +114,7 @@ export default function Dashboard() {
         prediction: predData.prediction,
         confidence: predData.confidence,
         modelUsed: predData.model_used,
+        warning: predData.warning,
         attributions: explainData.attributions,
         summary: summaryData.summary,
         keywords: keywordsData.keywords,
@@ -273,6 +274,13 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+
+            {results.warning && (
+              <div className="p-4 rounded-xl border border-amber-900/50 bg-amber-950/10 text-amber-300 text-xs flex gap-2 items-start font-medium leading-relaxed">
+                <Info className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
+                <span>{results.warning}</span>
+              </div>
+            )}
 
             {/* Explainable AI Highlight Block */}
             <div className="p-6 rounded-2xl border border-zinc-800 bg-zinc-900/40 backdrop-blur space-y-4">

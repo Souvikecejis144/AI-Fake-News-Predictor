@@ -93,6 +93,7 @@ class PredictionResponse(BaseModel):
     prediction: str  # "REAL" or "FAKE"
     confidence: float
     model_used: str
+    warning: Optional[str] = None
 
 class ExplanationRequest(BaseModel):
     text: str
@@ -103,24 +104,28 @@ class ExplanationResponse(BaseModel):
 
 class SummaryRequest(BaseModel):
     text: str
+    model_type: Optional[str] = "transformer"
 
 class SummaryResponse(BaseModel):
     summary: str
 
 class KeywordsRequest(BaseModel):
     text: str
+    model_type: Optional[str] = "transformer"
 
 class KeywordsResponse(BaseModel):
     keywords: List[str]
 
 class TopicsRequest(BaseModel):
     text: str
+    model_type: Optional[str] = "transformer"
 
 class TopicsResponse(BaseModel):
     topic: str
 
 class SentimentRequest(BaseModel):
     text: str
+    model_type: Optional[str] = "transformer"
 
 class SentimentResponse(BaseModel):
     sentiment: str  # "POSITIVE", "NEGATIVE", "NEUTRAL"
@@ -161,6 +166,15 @@ async def startup_event():
 async def predict(request: PredictionRequest):
     global model
     try:
+        # Check text length for warning
+        warning_msg = None
+        if len(request.text.strip()) < 150:
+            warning_msg = (
+                "This text is very short. Style-based models (RoBERTa/ML) are trained on "
+                "full-length articles and are less reliable for short standalone claims. "
+                "Try using the Google Gemini model option for factual/real-time verification."
+            )
+
         if request.model_type == "gemini":
             api_key = os.environ.get("GEMINI_API_KEY")
             if not api_key:
@@ -187,7 +201,8 @@ async def predict(request: PredictionRequest):
             return {
                 "prediction": pred,
                 "confidence": conf,
-                "model_used": "Google Gemini 2.5 Flash (LLM)"
+                "model_used": "Google Gemini 2.5 Flash (LLM)",
+                "warning": warning_msg
             }
             
         elif request.model_type == "transformer":
@@ -197,16 +212,17 @@ async def predict(request: PredictionRequest):
                 return {
                     "prediction": result["prediction"],
                     "confidence": result["confidence"],
-                    "model_used": result["model_used"]
+                    "model_used": result["model_used"],
+                    "warning": warning_msg
                 }
             except Exception as e:
                 print(f"Transformer failed, falling back to ML model: {e}")
                 # Fall through to local model
-
+ 
         # Local ML model
         if model is None or vectorizer is None:
             raise HTTPException(status_code=503, detail="The trained local model is unavailable.")
-
+ 
         features = vectorizer.transform([request.text])
         prediction = int(model.predict(features)[0])
         probabilities = model.predict_proba(features)[0]
@@ -215,7 +231,8 @@ async def predict(request: PredictionRequest):
         return {
             "prediction": "REAL" if prediction == 1 else "FAKE",
             "confidence": float(probabilities[class_index]),
-            "model_used": "Local ML Model (TF-IDF + Logistic Regression)"
+            "model_used": "Local ML Model (TF-IDF + Logistic Regression)",
+            "warning": warning_msg
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -279,14 +296,15 @@ async def explain(request: ExplanationRequest):
 @app.post("/summary", response_model=SummaryResponse)
 async def summarize(request: SummaryRequest):
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            try:
-                prompt = f"Summarize the following news article in 2-3 sentences. Keep it objective:\n\n{request.text}"
-                summary = call_gemini(prompt)
-                return {"summary": summary}
-            except Exception as e:
-                print(f"Fallback summary due to Gemini error: {e}")
+        if request.model_type == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                try:
+                    prompt = f"Summarize the following news article in 2-3 sentences. Keep it objective:\n\n{request.text}"
+                    summary = call_gemini(prompt)
+                    return {"summary": summary}
+                except Exception as e:
+                    print(f"Fallback summary due to Gemini error: {e}")
         
         # Simple extractive summary: first 2 sentences
         sentences = re.split(r'[.!?]+', request.text)
@@ -301,23 +319,24 @@ async def summarize(request: SummaryRequest):
 @app.post("/keywords", response_model=KeywordsResponse)
 async def extract_keywords(request: KeywordsRequest):
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            try:
-                prompt = (
-                    "Extract the top 5 to 8 keywords/phrases from the following news article. "
-                    "Respond with a simple JSON list of strings. Do not include markdown formatting or backticks.\n\n"
-                    f"Article:\n{request.text}"
-                )
-                response_text = call_gemini(prompt)
-                json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
-                if json_match:
-                    keywords = json.loads(json_match.group(0))
-                else:
-                    keywords = json.loads(response_text)
-                return {"keywords": [str(kw) for kw in keywords]}
-            except Exception as e:
-                print(f"Fallback keywords due to Gemini error: {e}")
+        if request.model_type == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                try:
+                    prompt = (
+                        "Extract the top 5 to 8 keywords/phrases from the following news article. "
+                        "Respond with a simple JSON list of strings. Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_gemini(prompt)
+                    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+                    if json_match:
+                        keywords = json.loads(json_match.group(0))
+                    else:
+                        keywords = json.loads(response_text)
+                    return {"keywords": [str(kw) for kw in keywords]}
+                except Exception as e:
+                    print(f"Fallback keywords due to Gemini error: {e}")
 
         # Simple keyword extraction using preprocessing
         processed = preprocessor.preprocess(request.text, remove_stops=False)
@@ -337,23 +356,24 @@ async def extract_keywords(request: KeywordsRequest):
 @app.post("/topics", response_model=TopicsResponse)
 async def classify_topics(request: TopicsRequest):
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            try:
-                prompt = (
-                    "Classify the main topic of the following news article. "
-                    "Respond with only a single word from: Politics, Technology, Health, Business, Science, Sports, or General.\n\n"
-                    f"Article:\n{request.text}"
-                )
-                topic = call_gemini(prompt).strip().strip(".*").strip().capitalize()
-                allowed = {"Politics", "Technology", "Health", "Business", "Science", "Sports", "General"}
-                if topic in allowed:
-                    return {"topic": topic}
-                for a in allowed:
-                    if a.lower() in topic.lower():
-                        return {"topic": a}
-            except Exception as e:
-                print(f"Fallback topic due to Gemini error: {e}")
+        if request.model_type == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                try:
+                    prompt = (
+                        "Classify the main topic of the following news article. "
+                        "Respond with only a single word from: Politics, Technology, Health, Business, Science, Sports, or General.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    topic = call_gemini(prompt).strip().strip(".*").strip().capitalize()
+                    allowed = {"Politics", "Technology", "Health", "Business", "Science", "Sports", "General"}
+                    if topic in allowed:
+                        return {"topic": topic}
+                    for a in allowed:
+                        if a.lower() in topic.lower():
+                            return {"topic": a}
+                except Exception as e:
+                    print(f"Fallback topic due to Gemini error: {e}")
 
         text_lower = request.text.lower()
         
@@ -383,35 +403,36 @@ async def classify_topics(request: TopicsRequest):
 @app.post("/sentiment", response_model=SentimentResponse)
 async def analyze_sentiment(request: SentimentRequest):
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            try:
-                prompt = (
-                    "Analyze the sentiment of the following news article. "
-                    "Respond with a JSON object containing: "
-                    "'sentiment' (either 'POSITIVE', 'NEGATIVE', or 'NEUTRAL'), "
-                    "'pos' (probability between 0 and 1), "
-                    "'neg' (probability between 0 and 1), and "
-                    "'neu' (probability between 0 and 1). "
-                    "Make sure pos + neg + neu sums to 1.0. "
-                    "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
-                    f"Article:\n{request.text}"
-                )
-                response_text = call_gemini(prompt)
-                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-                if json_match:
-                    data = json.loads(json_match.group(0))
-                else:
-                    data = json.loads(response_text)
-                
-                return {
-                    "sentiment": data.get("sentiment", "NEUTRAL").upper(),
-                    "pos": float(data.get("pos", 0.33)),
-                    "neg": float(data.get("neg", 0.33)),
-                    "neu": float(data.get("neu", 0.34))
-                }
-            except Exception as e:
-                print(f"Fallback sentiment due to Gemini error: {e}")
+        if request.model_type == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                try:
+                    prompt = (
+                        "Analyze the sentiment of the following news article. "
+                        "Respond with a JSON object containing: "
+                        "'sentiment' (either 'POSITIVE', 'NEGATIVE', or 'NEUTRAL'), "
+                        "'pos' (probability between 0 and 1), "
+                        "'neg' (probability between 0 and 1), and "
+                        "'neu' (probability between 0 and 1). "
+                        "Make sure pos + neg + neu sums to 1.0. "
+                        "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_gemini(prompt)
+                    json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                    if json_match:
+                        data = json.loads(json_match.group(0))
+                    else:
+                        data = json.loads(response_text)
+                    
+                    return {
+                        "sentiment": data.get("sentiment", "NEUTRAL").upper(),
+                        "pos": float(data.get("pos", 0.33)),
+                        "neg": float(data.get("neg", 0.33)),
+                        "neu": float(data.get("neu", 0.34))
+                    }
+                except Exception as e:
+                    print(f"Fallback sentiment due to Gemini error: {e}")
 
         text_lower = request.text.lower()
         
