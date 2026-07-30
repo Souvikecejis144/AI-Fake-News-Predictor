@@ -25,7 +25,7 @@ if (-not (Test-ListeningPort 8000)) {
 }
 
 if (-not (Test-ListeningPort 3000)) {
-    $frontendCommand = "& 'C:\Program Files\nodejs\node.exe' '$next' dev --hostname 127.0.0.1 --port 3000"
+    $frontendCommand = "& 'C:\Program Files\nodejs\node.exe' '$next' dev --hostname localhost --port 3000"
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $frontendCommand -WorkingDirectory $frontendRoot
 }
 
@@ -41,8 +41,8 @@ if (-not (Test-ListeningPort 3000)) {
 }
 
 if (-not $NoBrowser) {
-    Start-Process "http://127.0.0.1:3000"
+    Start-Process "http://localhost:3000"
 }
 
-Write-Host "Frontend: http://127.0.0.1:3000"
-Write-Host "API: http://127.0.0.1:8000"
+Write-Host "Frontend: http://localhost:3000"
+Write-Host "API: http://localhost:8000"

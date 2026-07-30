@@ -11,7 +11,8 @@ export default function Home() {
 
   useEffect(() => {
     // Fetch metrics from backend
-    fetch('http://127.0.0.1:8000/metrics')
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    fetch(`${apiBase}/metrics`)
       .then(res => res.json())
       .then((data: MetricsData) => setMetrics(data))
       .catch(err => console.error('Failed to fetch metrics:', err));

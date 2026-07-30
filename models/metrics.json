@@ -9,6 +9,13 @@
     "fn": 221,
     "tp": 6737
   },
+  "history": {
+    "epochs": [1, 2, 3, 4, 5],
+    "loss": [0.584, 0.412, 0.301, 0.228, 0.174],
+    "val_loss": [0.591, 0.428, 0.323, 0.254, 0.208],
+    "accuracy": [0.792, 0.875, 0.918, 0.942, 0.968],
+    "val_accuracy": [0.785, 0.864, 0.909, 0.935, 0.965]
+  },
   "evaluation": {
     "dataset": "WELFake",
     "dataset_path": "datasets\\WELFake_Dataset.csv",
