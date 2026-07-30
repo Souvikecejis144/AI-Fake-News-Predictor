@@ -28,7 +28,7 @@ interface AnalysisResults {
 
 export default function Dashboard() {
   const [text, setText] = useState('');
-  const [modelType, setModelType] = useState<'ml' | 'transformer' | 'gemini'>('ml');
+  const [modelType, setModelType] = useState<'ml' | 'transformer' | 'gemini' | 'groq'>('ml');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<AnalysisResults | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,11 +67,19 @@ export default function Dashboard() {
       if (!predRes.ok) throw new Error('Prediction API failed.');
       const predData = await predRes.json();
 
+      // Determine the actual model type used for secondary endpoints in case of fallbacks
+      let resolvedModelType = modelType;
+      if (predData.model_used.includes('Transformer') || predData.model_used.includes('roberta')) {
+        resolvedModelType = 'transformer';
+      } else if (predData.model_used.includes('Local ML')) {
+        resolvedModelType = 'ml';
+      }
+
       // 2. Explain
       const explainRes = await fetch(`${apiBase}/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, model_type: modelType }),
+        body: JSON.stringify({ text, model_type: resolvedModelType }),
       });
       if (!explainRes.ok) throw new Error('Explainability API failed.');
       const explainData = await explainRes.json();
@@ -80,7 +88,7 @@ export default function Dashboard() {
       const summaryRes = await fetch(`${apiBase}/summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, model_type: modelType }),
+        body: JSON.stringify({ text, model_type: resolvedModelType }),
       });
       const summaryData = summaryRes.ok ? await summaryRes.json() : { summary: 'Summary unavailable.' };
 
@@ -88,7 +96,7 @@ export default function Dashboard() {
       const keywordsRes = await fetch(`${apiBase}/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, model_type: modelType }),
+        body: JSON.stringify({ text, model_type: resolvedModelType }),
       });
       const keywordsData = keywordsRes.ok ? await keywordsRes.json() : { keywords: [] };
 
@@ -96,7 +104,7 @@ export default function Dashboard() {
       const topicsRes = await fetch(`${apiBase}/topics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, model_type: modelType }),
+        body: JSON.stringify({ text, model_type: resolvedModelType }),
       });
       const topicsData = topicsRes.ok ? await topicsRes.json() : { topic: 'General' };
 
@@ -104,7 +112,7 @@ export default function Dashboard() {
       const sentimentRes = await fetch(`${apiBase}/sentiment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, model_type: modelType }),
+        body: JSON.stringify({ text, model_type: resolvedModelType }),
       });
       const sentimentData = sentimentRes.ok 
         ? await sentimentRes.json() 
@@ -167,12 +175,13 @@ export default function Dashboard() {
               <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Classification Model</label>
               <select
                 value={modelType}
-                onChange={(e) => setModelType(e.target.value as 'ml' | 'transformer' | 'gemini')}
+                onChange={(e) => setModelType(e.target.value as 'ml' | 'transformer' | 'gemini' | 'groq')}
                 className="w-full p-3 rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-200 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-sm transition"
               >
                 <option value="ml">Local ML Model (TF-IDF + Logistic Regression)</option>
                 <option value="transformer">Transformer Model (RoBERTa)</option>
                 <option value="gemini">Google Gemini 1.5 Flash (LLM)</option>
+                <option value="groq">Groq LLM (Llama 3.3 70B)</option>
               </select>
             </div>
 

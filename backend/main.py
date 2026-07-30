@@ -63,6 +63,39 @@ def call_gemini(prompt: str) -> str:
         print(f"Error calling Gemini: {e}")
         raise RuntimeError(f"Gemini API error: {e}")
 
+def call_groq(prompt: str) -> str:
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not configured.")
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2
+    }
+    
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST"
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            return res_data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Error calling Groq: {e}")
+        raise RuntimeError(f"Groq API error: {e}")
+
 app = FastAPI(
     title="AI Fake News Detection API",
     description="API for detecting fake news using Transformer models with Explainable AI",
@@ -176,36 +209,88 @@ async def predict(request: PredictionRequest):
             )
 
         if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise HTTPException(status_code=503, detail="Gemini API key is not configured.")
+            try:
+                api_key = os.environ.get("GEMINI_API_KEY")
+                if not api_key:
+                    raise ValueError("Gemini API key is not configured.")
+                
+                prompt = (
+                    "Analyze the following news article and determine if it is REAL or FAKE. "
+                    "Respond with a JSON object containing: "
+                    "'prediction' (either 'REAL' or 'FAKE') and "
+                    "'confidence' (a float between 0 and 1 representing your confidence score). "
+                    "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
+                    f"Text:\n{request.text}"
+                )
+                response_text = call_gemini(prompt)
+                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(0))
+                else:
+                    data = json.loads(response_text)
+                
+                pred = data.get("prediction", "REAL").upper()
+                conf = float(data.get("confidence", 0.85))
+                
+                return {
+                    "prediction": pred,
+                    "confidence": conf,
+                    "model_used": "Google Gemini 2.5 Flash (LLM)",
+                    "warning": warning_msg
+                }
+            except Exception as e:
+                print(f"Gemini prediction failed: {e}")
+                if os.environ.get("GROQ_API_KEY"):
+                    print("Attempting Groq fallback for prediction...")
+                    request.model_type = "groq"
+                else:
+                    fallback_warning = (
+                        "Google Gemini API failed (Rate Limited or Invalid Key). "
+                        "Fell back to the Transformer (RoBERTa) model."
+                    )
+                    warning_msg = f"{fallback_warning} | {warning_msg}" if warning_msg else fallback_warning
+                    request.model_type = "transformer"
             
-            prompt = (
-                "Analyze the following news article and determine if it is REAL or FAKE. "
-                "Respond with a JSON object containing: "
-                "'prediction' (either 'REAL' or 'FAKE') and "
-                "'confidence' (a float between 0 and 1 representing your confidence score). "
-                "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
-                f"Text:\n{request.text}"
-            )
-            response_text = call_gemini(prompt)
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
-            else:
-                data = json.loads(response_text)
+        if request.model_type == "groq":
+            try:
+                api_key = os.environ.get("GROQ_API_KEY")
+                if not api_key:
+                    raise ValueError("Groq API key is not configured.")
+                
+                prompt = (
+                    "Analyze the following news article and determine if it is REAL or FAKE. "
+                    "Respond with a JSON object containing: "
+                    "'prediction' (either 'REAL' or 'FAKE') and "
+                    "'confidence' (a float between 0 and 1 representing your confidence score). "
+                    "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
+                    f"Text:\n{request.text}"
+                )
+                response_text = call_groq(prompt)
+                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(0))
+                else:
+                    data = json.loads(response_text)
+                
+                pred = data.get("prediction", "REAL").upper()
+                conf = float(data.get("confidence", 0.85))
+                
+                return {
+                    "prediction": pred,
+                    "confidence": conf,
+                    "model_used": "Groq Llama-3.3 70B (LLM)",
+                    "warning": warning_msg
+                }
+            except Exception as e:
+                print(f"Groq prediction failed: {e}")
+                fallback_warning = (
+                    "LLM API calls failed (Gemini/Groq unavailable). "
+                    "Fell back to the Transformer (RoBERTa) model."
+                )
+                warning_msg = f"{fallback_warning} | {warning_msg}" if warning_msg else fallback_warning
+                request.model_type = "transformer"
             
-            pred = data.get("prediction", "REAL").upper()
-            conf = float(data.get("confidence", 0.85))
-            
-            return {
-                "prediction": pred,
-                "confidence": conf,
-                "model_used": "Google Gemini 2.5 Flash (LLM)",
-                "warning": warning_msg
-            }
-            
-        elif request.model_type == "transformer":
+        if request.model_type == "transformer":
             try:
                 from models.model_loader import predict_with_transformer
                 result = predict_with_transformer(request.text)
@@ -241,34 +326,64 @@ async def predict(request: PredictionRequest):
 @app.post("/explain", response_model=ExplanationResponse)
 async def explain(request: ExplanationRequest):
     try:
-        if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise HTTPException(status_code=503, detail="Gemini API key is not configured.")
-            
-            prompt = (
-                "Given the following news article, select up to 10 key words/phrases that contribute to "
-                "determining if it is REAL or FAKE. For each word/phrase, assign an attribution score between -1.0 and 1.0 "
-                "(negative scores indicate FAKE news, positive scores indicate REAL news). "
-                "Respond with ONLY a JSON array of objects, where each object has keys 'token' (the word/phrase) and 'score' (the float attribution). "
-                "Do not include markdown formatting or backticks.\n\n"
-                f"Article:\n{request.text}"
-            )
-            response_text = call_gemini(prompt)
-            json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
-            if json_match:
-                attributions = json.loads(json_match.group(0))
-            else:
-                attributions = json.loads(response_text)
-            
-            formatted_attributions = []
-            for item in attributions:
-                if isinstance(item, dict) and "token" in item and "score" in item:
-                    formatted_attributions.append({
-                        "token": str(item["token"]),
-                        "score": float(item["score"])
-                    })
-            return {"attributions": formatted_attributions}
+        if request.model_type in ("gemini", "groq"):
+            # Try Gemini first
+            if request.model_type == "gemini" and os.environ.get("GEMINI_API_KEY"):
+                try:
+                    prompt = (
+                        "Given the following news article, select up to 10 key words/phrases that contribute to "
+                        "determining if it is REAL or FAKE. For each word/phrase, assign an attribution score between -1.0 and 1.0 "
+                        "(negative scores indicate FAKE news, positive scores indicate REAL news). "
+                        "Respond with ONLY a JSON array of objects, where each object has keys 'token' (the word/phrase) and 'score' (the float attribution). "
+                        "Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_gemini(prompt)
+                    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+                    if json_match:
+                        attributions = json.loads(json_match.group(0))
+                    else:
+                        attributions = json.loads(response_text)
+                    
+                    formatted_attributions = []
+                    for item in attributions:
+                        if isinstance(item, dict) and "token" in item and "score" in item:
+                            formatted_attributions.append({
+                                "token": str(item["token"]),
+                                "score": float(item["score"])
+                            })
+                    return {"attributions": formatted_attributions}
+                except Exception as e:
+                    print(f"Gemini explain failed, trying fallback: {e}")
+
+            # Try Groq fallback
+            if os.environ.get("GROQ_API_KEY"):
+                try:
+                    prompt = (
+                        "Given the following news article, select up to 10 key words/phrases that contribute to "
+                        "determining if it is REAL or FAKE. For each word/phrase, assign an attribution score between -1.0 and 1.0 "
+                        "(negative scores indicate FAKE news, positive scores indicate REAL news). "
+                        "Respond with ONLY a JSON array of objects, where each object has keys 'token' (the word/phrase) and 'score' (the float attribution). "
+                        "Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_groq(prompt)
+                    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+                    if json_match:
+                        attributions = json.loads(json_match.group(0))
+                    else:
+                        attributions = json.loads(response_text)
+                    
+                    formatted_attributions = []
+                    for item in attributions:
+                        if isinstance(item, dict) and "token" in item and "score" in item:
+                            formatted_attributions.append({
+                                "token": str(item["token"]),
+                                "score": float(item["score"])
+                            })
+                    return {"attributions": formatted_attributions}
+                except Exception as e:
+                    print(f"Groq explain failed: {e}")
             
         elif request.model_type == "transformer":
             try:
@@ -296,15 +411,24 @@ async def explain(request: ExplanationRequest):
 @app.post("/summary", response_model=SummaryResponse)
 async def summarize(request: SummaryRequest):
     try:
-        if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if api_key:
+        if request.model_type in ("gemini", "groq"):
+            # Try Gemini first
+            if request.model_type == "gemini" and os.environ.get("GEMINI_API_KEY"):
                 try:
                     prompt = f"Summarize the following news article in 2-3 sentences. Keep it objective:\n\n{request.text}"
                     summary = call_gemini(prompt)
                     return {"summary": summary}
                 except Exception as e:
                     print(f"Fallback summary due to Gemini error: {e}")
+
+            # Try Groq fallback
+            if os.environ.get("GROQ_API_KEY"):
+                try:
+                    prompt = f"Summarize the following news article in 2-3 sentences. Keep it objective:\n\n{request.text}"
+                    summary = call_groq(prompt)
+                    return {"summary": summary}
+                except Exception as e:
+                    print(f"Fallback summary due to Groq error: {e}")
         
         # Simple extractive summary: first 2 sentences
         sentences = re.split(r'[.!?]+', request.text)
@@ -319,9 +443,9 @@ async def summarize(request: SummaryRequest):
 @app.post("/keywords", response_model=KeywordsResponse)
 async def extract_keywords(request: KeywordsRequest):
     try:
-        if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if api_key:
+        if request.model_type in ("gemini", "groq"):
+            # Try Gemini first
+            if request.model_type == "gemini" and os.environ.get("GEMINI_API_KEY"):
                 try:
                     prompt = (
                         "Extract the top 5 to 8 keywords/phrases from the following news article. "
@@ -337,6 +461,24 @@ async def extract_keywords(request: KeywordsRequest):
                     return {"keywords": [str(kw) for kw in keywords]}
                 except Exception as e:
                     print(f"Fallback keywords due to Gemini error: {e}")
+
+            # Try Groq fallback
+            if os.environ.get("GROQ_API_KEY"):
+                try:
+                    prompt = (
+                        "Extract the top 5 to 8 keywords/phrases from the following news article. "
+                        "Respond with a simple JSON list of strings. Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_groq(prompt)
+                    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+                    if json_match:
+                        keywords = json.loads(json_match.group(0))
+                    else:
+                        keywords = json.loads(response_text)
+                    return {"keywords": [str(kw) for kw in keywords]}
+                except Exception as e:
+                    print(f"Fallback keywords due to Groq error: {e}")
 
         # Simple keyword extraction using preprocessing
         processed = preprocessor.preprocess(request.text, remove_stops=False)
@@ -356,9 +498,9 @@ async def extract_keywords(request: KeywordsRequest):
 @app.post("/topics", response_model=TopicsResponse)
 async def classify_topics(request: TopicsRequest):
     try:
-        if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if api_key:
+        if request.model_type in ("gemini", "groq"):
+            # Try Gemini first
+            if request.model_type == "gemini" and os.environ.get("GEMINI_API_KEY"):
                 try:
                     prompt = (
                         "Classify the main topic of the following news article. "
@@ -374,6 +516,24 @@ async def classify_topics(request: TopicsRequest):
                             return {"topic": a}
                 except Exception as e:
                     print(f"Fallback topic due to Gemini error: {e}")
+
+            # Try Groq fallback
+            if os.environ.get("GROQ_API_KEY"):
+                try:
+                    prompt = (
+                        "Classify the main topic of the following news article. "
+                        "Respond with only a single word from: Politics, Technology, Health, Business, Science, Sports, or General.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    topic = call_groq(prompt).strip().strip(".*").strip().capitalize()
+                    allowed = {"Politics", "Technology", "Health", "Business", "Science", "Sports", "General"}
+                    if topic in allowed:
+                        return {"topic": topic}
+                    for a in allowed:
+                        if a.lower() in topic.lower():
+                            return {"topic": a}
+                except Exception as e:
+                    print(f"Fallback topic due to Groq error: {e}")
 
         text_lower = request.text.lower()
         
@@ -403,9 +563,9 @@ async def classify_topics(request: TopicsRequest):
 @app.post("/sentiment", response_model=SentimentResponse)
 async def analyze_sentiment(request: SentimentRequest):
     try:
-        if request.model_type == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if api_key:
+        if request.model_type in ("gemini", "groq"):
+            # Try Gemini first
+            if request.model_type == "gemini" and os.environ.get("GEMINI_API_KEY"):
                 try:
                     prompt = (
                         "Analyze the sentiment of the following news article. "
@@ -433,6 +593,36 @@ async def analyze_sentiment(request: SentimentRequest):
                     }
                 except Exception as e:
                     print(f"Fallback sentiment due to Gemini error: {e}")
+
+            # Try Groq fallback
+            if os.environ.get("GROQ_API_KEY"):
+                try:
+                    prompt = (
+                        "Analyze the sentiment of the following news article. "
+                        "Respond with a JSON object containing: "
+                        "'sentiment' (either 'POSITIVE', 'NEGATIVE', or 'NEUTRAL'), "
+                        "'pos' (probability between 0 and 1), "
+                        "'neg' (probability between 0 and 1), and "
+                        "'neu' (probability between 0 and 1). "
+                        "Make sure pos + neg + neu sums to 1.0. "
+                        "Respond with ONLY the JSON object. Do not include markdown formatting or backticks.\n\n"
+                        f"Article:\n{request.text}"
+                    )
+                    response_text = call_groq(prompt)
+                    json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                    if json_match:
+                        data = json.loads(json_match.group(0))
+                    else:
+                        data = json.loads(response_text)
+                    
+                    return {
+                        "sentiment": data.get("sentiment", "NEUTRAL").upper(),
+                        "pos": float(data.get("pos", 0.33)),
+                        "neg": float(data.get("neg", 0.33)),
+                        "neu": float(data.get("neu", 0.34))
+                    }
+                except Exception as e:
+                    print(f"Fallback sentiment due to Groq error: {e}")
 
         text_lower = request.text.lower()
         
